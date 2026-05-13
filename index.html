@@ -459,7 +459,7 @@
             <div class="header-logo"><i class="fas fa-clipboard-user"></i></div>
             <div>
                 <h1>Controle de Colaboradores RDC</h1>
-                <div class="header-sub">Gestão de Presenças · Fornecedor DO</div>
+                <div class="header-sub">Gestão de Presenças · Fornecedor D0/Enfok</div>
             </div>
         </div>
         <div class="subtitle">
@@ -470,7 +470,6 @@
 </header>
 
 <div class="container">
-
     <!-- CADASTRO / EDIÇÃO -->
     <div class="card no-print">
         <div class="card-header">
@@ -486,7 +485,8 @@
                 <label>Fornecedor</label>
                 <select id="agencia" required>
                     <!--<option value="">Selecione...</option>-->
-                    <option value="DO">DO</option>
+                    <option value="DO">D0</option>
+                    <option value="Enfok">Enfok</option>
                     <!--<option value="Mission">Mission</option>
                     <option value="Polly">Polly</option>-->
                 </select>
@@ -536,6 +536,19 @@
         </div>
     </div>
 
+    <!-- ADMIN ACTIONS -->
+    <div class="card no-print">
+        <div class="card-header">
+            <div class="card-header-icon"><i class="fas fa-cogs"></i></div>
+            <h3>Ações Administrativas</h3>
+        </div>
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <button type="button" class="btn btn-danger" onclick="clearAllData()" style="background: #dc2626; color: white;">
+                <i class="fas fa-trash-alt"></i> Excluir Todos os Dados
+            </button>
+        </div>
+    </div>
+
     <div id="row-actions-panel" class="actions-panel no-print hidden">
         <div class="panel-header">
             <div>
@@ -577,7 +590,7 @@ import { DB } from './bd.js';
 const hoje = new Date().toISOString().slice(0,10);
 const keyPres  = `rdc_pres_${hoje}`;
 const keyColabs = "rdc_colabs";
-const agencyFilter = "DO";
+const agencyFilter = ["DO", "Enfok"];
 
 let colaboradores = JSON.parse(localStorage.getItem(keyColabs)) || [];
 let presencas     = JSON.parse(localStorage.getItem(keyPres))  || {};
@@ -600,6 +613,11 @@ function normalizeColaboradores(data) {
 }
 
 async function initApp() {
+    // Carregar dados locais primeiro para resposta imediata
+    colaboradores = JSON.parse(localStorage.getItem(keyColabs)) || [];
+    presencas = JSON.parse(localStorage.getItem(keyPres)) || {};
+
+    // Tentar sincronizar com Firebase em background
     try {
         const [firebaseCols, firebasePres] = await Promise.all([
             DB.readPath('colaboradores'),
@@ -608,30 +626,42 @@ async function initApp() {
 
         if (firebaseCols) colaboradores = normalizeColaboradores(firebaseCols);
         if (firebasePres) presencas = firebasePres;
+
+        // Salvar localmente após sincronizar
+        localStorage.setItem(keyColabs, JSON.stringify(colaboradores));
+        localStorage.setItem(keyPres, JSON.stringify(presencas));
     } catch (error) {
-        console.warn('Não foi possível carregar dados do BD:', error);
+        console.warn('Não foi possível sincronizar com BD, usando dados locais:', error);
     }
 
     colaboradores.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
     atualizarPresenca();
 }
 
-function salvarDados() {
+async function salvarDados() {
+    // Salvar localmente primeiro para resposta imediata
     localStorage.setItem(keyColabs, JSON.stringify(colaboradores));
     localStorage.setItem(keyPres, JSON.stringify(presencas));
-    DB.writePath('colaboradores', colaboradores).catch(() => {});
-    DB.writePath('presencas', presencas).catch(() => {});
+
+    // Salvar no Firebase em paralelo (não bloquear UI)
+    Promise.all([
+        DB.writePath('colaboradores', colaboradores),
+        DB.writePath('presencas', presencas)
+    ]).catch(error => {
+        console.warn('Erro ao salvar no Firebase:', error);
+        // Dados permanecem no localStorage
+    });
 }
 
-function getDoColaboradores() {
-    return colaboradores.filter(c => c.agencia === agencyFilter);
+function getFilteredColaboradores() {
+    return colaboradores.filter(c => agencyFilter.includes(c.agencia));
 }
 
 function preencherFormulario(index) {
-    const colab = getDoColaboradores()[index];
+    const colab = getFilteredColaboradores()[index];
     if (!colab) return;
 
-    const globalIndex = colaboradores.findIndex(c => c.nome === colab.nome && c.agencia === agencyFilter);
+    const globalIndex = colaboradores.findIndex(c => c.nome === colab.nome && agencyFilter.includes(c.agencia));
     if (globalIndex < 0) return;
 
     document.getElementById("nome").value    = colab.nome;
@@ -653,7 +683,7 @@ function cancelarEdicao() {
 function excluirColaborador(nome) {
     if (!confirm("Deseja realmente excluir este colaborador?\nTodas as marcações associadas serão removidas.")) return;
 
-    const index = colaboradores.findIndex(c => c.nome === nome && c.agencia === agencyFilter);
+    const index = colaboradores.findIndex(c => c.nome === nome && agencyFilter.includes(c.agencia));
     if (index < 0) return;
 
     colaboradores.splice(index, 1);
@@ -720,8 +750,8 @@ function marcarAtivo(status) {
 
 function editarSelecionado() {
     if (!selectedNome) return;
-    const doIndex = getDoColaboradores().findIndex(c => c.nome === selectedNome);
-    if (doIndex >= 0) preencherFormulario(doIndex);
+    const filteredIndex = getFilteredColaboradores().findIndex(c => c.nome === selectedNome);
+    if (filteredIndex >= 0) preencherFormulario(filteredIndex);
 }
 
 function deletarSelecionado() {
@@ -754,16 +784,24 @@ function gerarRelatorio() {
 
 function atualizarPresenca() {
     const container = document.getElementById("tabelas-presenca");
-    const lista = getDoColaboradores();
     container.innerHTML = "";
+
+    const lista = getFilteredColaboradores();
+    const grupos = {};
+    agencyFilter.forEach(ag => grupos[ag] = []);
+
+    lista.forEach(c => {
+        if (grupos[c.agencia]) grupos[c.agencia].push(c);
+    });
 
     let deslocamento = 0;
     let nolocal = 0;
 
-    if (!lista.length) {
-        container.innerHTML = `<div class="card"><p>Nenhum colaborador DO cadastrado.</p></div>`;
-    } else {
-        let html = `<div class="grupo-fornecedor">DO</div>
+    agencyFilter.forEach(forn => {
+        const listaForn = grupos[forn];
+        if (!listaForn?.length) return;
+
+        let html = `<div class="grupo-fornecedor">${forn}</div>
             <table>
                 <thead><tr>
                     <th>Nome</th>
@@ -772,9 +810,8 @@ function atualizarPresenca() {
                 </tr></thead>
             <tbody>`;
 
-        lista.forEach((c) => {
+        listaForn.forEach((c) => {
             let st = presencas[c.nome];
-            // undefined / null / '' => Pendente; 'P' => No Local; 'X' => Em Deslocamento
             const isPendente       = (st === undefined || st === null || st === '');
             const isNoLocal        = (st === 'P');
             const isEmDeslocamento = (st === 'X');
@@ -789,7 +826,6 @@ function atualizarPresenca() {
 
             if (isNoLocal)        nolocal      += 1;
             if (isEmDeslocamento) deslocamento += 1;
-            // pendente: do not overwrite stored value, keep as is
 
             const tipoLabel = c.tipo === "F" ? "Fixo" : "Diarista";
 
@@ -802,6 +838,10 @@ function atualizarPresenca() {
 
         html += `</tbody></table>`;
         container.insertAdjacentHTML("beforeend", html);
+    });
+
+    if (!lista.length) {
+        container.innerHTML = `<div class="card"><p>Nenhum colaborador cadastrado.</p></div>`;
     }
 
     document.getElementById("deslocamento-count").textContent = deslocamento;
@@ -809,6 +849,42 @@ function atualizarPresenca() {
     document.getElementById("total-count").textContent = deslocamento + nolocal;
 
     salvarDados();
+}
+
+async function clearAllData() {
+    if (!confirm("ATENÇÃO: Esta ação irá excluir TODOS os dados de colaboradores e presenças permanentemente!\n\nDeseja continuar?")) return;
+
+    try {
+        // Limpar Firebase
+        await Promise.all([
+            DB.deletePath('colaboradores'),
+            DB.deletePath('presencas')
+        ]);
+
+        // Limpar localStorage
+        localStorage.removeItem(keyColabs);
+        localStorage.removeItem(keyPres);
+
+        // Resetar variáveis locais
+        colaboradores = [];
+        presencas = {};
+        editandoIndex = null;
+        selectedNome = null;
+
+        // Fechar painel se aberto
+        closeRowActions();
+
+        // Limpar formulário
+        cancelarEdicao();
+
+        // Atualizar interface
+        atualizarPresenca();
+
+        alert("Todos os dados foram excluídos com sucesso.");
+    } catch (error) {
+        console.error('Erro ao excluir dados:', error);
+        alert("Erro ao excluir dados. Verifique o console para mais detalhes.");
+    }
 }
 
 window.salvarColaborador = salvarColaborador;
@@ -822,6 +898,7 @@ window.deletarSelecionado = deletarSelecionado;
 window.openRowActions = openRowActions;
 window.closeRowActions = closeRowActions;
 window.gerarRelatorio = gerarRelatorio;
+window.clearAllData = clearAllData;
 window.DB = DB;
 
 initApp();
