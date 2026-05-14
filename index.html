@@ -343,6 +343,13 @@
             margin-bottom: 1.5rem;
             box-shadow: 0 2px 16px rgba(0,0,0,0.08);
             border: 1.5px solid var(--primary-light);
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            min-width: 320px;
+            max-width: 90vw;
         }
 
         .actions-panel.hidden { display: none; }
@@ -373,6 +380,29 @@
             display: flex;
             flex-wrap: wrap;
             gap: 0.6rem;
+        }
+
+        /* Overlay para modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+            display: none;
+        }
+
+        .modal-overlay.active { display: block; }
+
+        .clickable-row {
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .clickable-row:hover {
+            background: #f0f9ff !important;
         }
 
         .clickable-name {
@@ -573,6 +603,9 @@
         </div>
     </div>
 
+    <!-- Modal Overlay -->
+    <div id="modal-overlay" class="modal-overlay"></div>
+
     <!-- TABELAS DE PRESENÇA -->
     <div id="tabelas-presenca"></div>
 
@@ -601,6 +634,7 @@ const dataElement = document.getElementById("data-atual");
 const panel = document.getElementById("row-actions-panel");
 const panelName = document.getElementById("panel-colab-name");
 const panelStatus = document.getElementById("panel-colab-status");
+const modalOverlay = document.getElementById("modal-overlay");
 
 dataElement.textContent = new Date().toLocaleDateString("pt-BR", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric"
@@ -636,6 +670,9 @@ async function initApp() {
 
     colaboradores.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
     atualizarPresenca();
+
+    // Event listener para fechar modal ao clicar no overlay
+    modalOverlay.addEventListener('click', closeRowActions);
 }
 
 async function salvarDados() {
@@ -763,11 +800,15 @@ function openRowActions(nome) {
     selectedNome = nome;
     updatePanel(nome);
     panel.classList.remove('hidden');
+    modalOverlay.classList.add('active');
+    document.body.style.overflow = 'hidden'; // Previne scroll
 }
 
 function closeRowActions() {
     selectedNome = null;
     panel.classList.add('hidden');
+    modalOverlay.classList.remove('active');
+    document.body.style.overflow = ''; // Restaura scroll
 }
 
 function updatePanel(nome) {
@@ -829,8 +870,8 @@ function atualizarPresenca() {
 
             const tipoLabel = c.tipo === "F" ? "Fixo" : "Diarista";
 
-            html += `<tr>
-                <td><span class="clickable-name" onclick="openRowActions('${c.nome.replace(/'/g,"\\'")}')">${c.nome}</span></td>
+            html += `<tr class="clickable-row" onclick="openRowActions('${c.nome.replace(/'/g,"\\'")}')">
+                <td><span class="clickable-name">${c.nome}</span></td>
                 <td><span class="tipo-badge">${tipoLabel}</span></td>
                 <td><span class="status-badge ${statusCls}">${statusIcon}${statusTxt}</span></td>
             </tr>`;
